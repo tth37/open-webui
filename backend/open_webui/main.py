@@ -18,6 +18,8 @@ from typing import Optional
 from aiocache import cached
 import aiohttp
 import requests
+from open_webui.tasks import create_task
+
 
 
 from fastapi import (
@@ -1135,9 +1137,20 @@ async def chat_completion(
         request.state.metadata = metadata
         form_data["metadata"] = metadata
 
-        form_data, metadata, events = await process_chat_payload(
-            request, form_data, user, metadata, model
+        async def all_time_consuming_jobs(request, form_data, user, metadata, model):
+            form_data, metadata, events = await process_chat_payload(
+                request, form_data, user, metadata, model
+            )
+            response = await chat_completion_handler(request, form_data, user)
+            await process_chat_response( # don't create_task inside `process_chat_response`
+                request, response, form_data, user, metadata, model, events, tasks
+            )
+            
+        task_id, _ = create_task(
+            all_time_consuming_jobs(request, form_data, user, metadata, model),
+            id=metadata["chat_id"],
         )
+        return {"status": True, "task_id": task_id}
 
     except Exception as e:
         log.debug(f"Error processing chat payload: {e}")
@@ -1156,17 +1169,17 @@ async def chat_completion(
             detail=str(e),
         )
 
-    try:
-        response = await chat_completion_handler(request, form_data, user)
+    # try:
+    #     response = await chat_completion_handler(request, form_data, user)
 
-        return await process_chat_response(
-            request, response, form_data, user, metadata, model, events, tasks
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    #     return await process_chat_response(
+    #         request, response, form_data, user, metadata, model, events, tasks
+    #     )
+    # except Exception as e:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail=str(e),
+    #     )
 
 
 # Alias for chat_completion (Legacy)
